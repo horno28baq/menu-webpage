@@ -533,7 +533,7 @@
             <button class="nav-btn" onclick="showSection('contact-section', this)">📞 Contacto</button>
             <button class="nav-btn" onclick="showSection('rewards-section', this)">🏆 Rewards</button>
             <button class="nav-btn" onclick="openRegisterModal()">📝 Registro de Usuarios</button>
-            <button class="nav-btn nav-data-btn" id="btn-datos" onclick="openAdminDataModal()" style="display:none;">📊 Datos</button>
+            <button class="nav-btn nav-data-btn" id="btn-datos" onclick="openAdminDataModal()" style="display:none;">📊 Clientes</button>
             <span class="admin-status-pill" id="admin-pill">🟢 Admin activo <button onclick="adminLogout()" style="background:none;border:none;color:#6ee56e;text-decoration:underline;cursor:pointer;font-size:0.7rem;">Salir</button></span>
         </nav>
     </header>
@@ -711,15 +711,68 @@
         </div>
     </div>
 
-    <!-- MODAL: Datos de clientes (solo admin) -->
+    <!-- MODAL: Panel de clientes y pedidos (solo admin) -->
     <div id="admin-data-modal" class="modal-overlay" onclick="closeModalOnOuterClick(event, 'admin-data-modal')">
         <div class="modal-card modal-wide">
             <div class="modal-body">
-                <h3 class="modal-title" style="margin-bottom: 1rem;">📊 Datos de Clientes Registrados</h3>
+                <h3 class="modal-title" style="margin-bottom: 1rem;">📊 Clientes &amp; Rewards</h3>
+                <div class="modal-actions" style="margin-bottom: 1rem;">
+                    <button class="modal-form-submit" style="flex:none; padding:10px 20px;" onclick="openOrderForm()">+ Registrar Pedido</button>
+                    <button class="modal-form-submit" style="flex:none; padding:10px 20px; background:var(--gold); color:#1a1a1a;" onclick="downloadRegistrationsExcel()">⬇️ Descargar Excel</button>
+                </div>
                 <div class="data-table-wrap" id="data-table-wrap"></div>
+                <p class="admin-note">🎁 = pedido global #50 o #100 del restaurante (pizza gratis). Haz clic en un cliente para ver su historial de pedidos.</p>
                 <div class="modal-actions">
-                    <button class="modal-form-submit" onclick="downloadRegistrationsExcel()">⬇️ Descargar Datos (Excel)</button>
                     <button class="modal-form-cancel" onclick="closeModal('admin-data-modal')">Cerrar</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL: Historial de pedidos de un cliente -->
+    <div id="client-history-modal" class="modal-overlay" onclick="closeModalOnOuterClick(event, 'client-history-modal')">
+        <div class="modal-card modal-wide">
+            <div class="modal-body">
+                <h3 class="modal-title" id="history-client-name" style="margin-bottom: 0.25rem;">Historial</h3>
+                <p class="modal-subtitle" id="history-client-sub" style="margin-bottom:1rem;"></p>
+                <div class="data-table-wrap" id="history-table-wrap"></div>
+                <div class="modal-actions">
+                    <button class="modal-form-cancel" onclick="closeModal('client-history-modal')">Cerrar</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL: Registrar pedido (solo admin) -->
+    <div id="order-form-modal" class="modal-overlay" onclick="closeModalOnOuterClick(event, 'order-form-modal')">
+        <div class="modal-card">
+            <div class="modal-body">
+                <h3 class="modal-title" style="margin-bottom: 1rem;">+ Registrar Pedido</h3>
+                <div class="form-field">
+                    <label>WhatsApp del cliente</label>
+                    <input type="tel" id="of-whatsapp" list="of-whatsapp-list" placeholder="Número con el que se registró (o uno nuevo)" oninput="autofillOrderClientName()">
+                    <datalist id="of-whatsapp-list"></datalist>
+                </div>
+                <div class="form-field">
+                    <label>Nombre y Apellido</label>
+                    <input type="text" id="of-name" placeholder="Se autocompleta si ya está registrado">
+                </div>
+                <div class="form-field">
+                    <label>Productos pedidos</label>
+                    <textarea id="of-items" placeholder="Ej: 1 Pizza Carnívora, 1 Pan de Jamón"></textarea>
+                </div>
+                <div class="form-field">
+                    <label>Monto total ($ COP)</label>
+                    <input type="number" id="of-amount" placeholder="Ej: 65000">
+                </div>
+                <div class="form-field">
+                    <label>Fecha del pedido</label>
+                    <input type="text" id="of-date" placeholder="AAAA-MM-DD">
+                </div>
+                <div class="form-error" id="of-error">Completa el WhatsApp, el nombre y el monto.</div>
+                <div class="modal-actions">
+                    <button class="modal-form-submit" onclick="saveOrderForm()">Guardar Pedido</button>
+                    <button class="modal-form-cancel" onclick="closeModal('order-form-modal')">Cancelar</button>
                 </div>
             </div>
         </div>
@@ -968,12 +1021,9 @@
             const btn = document.getElementById('reg-submit-btn');
             btn.disabled = true;
             try {
-                const existing = await db.collection('registrations').where('whatsapp', '==', whatsapp).get();
-                if (!existing.empty) {
-                    await existing.docs[0].ref.update({ name, date: new Date().toISOString() });
-                } else {
-                    await db.collection('registrations').add({ name, whatsapp, date: new Date().toISOString() });
-                }
+                await db.collection('registrations').doc(whatsapp).set({
+                    name, whatsapp, date: new Date().toISOString()
+                }, { merge: true });
                 document.getElementById('reg-success').classList.add('show');
                 setTimeout(() => closeModal('register-modal'), 1400);
             } catch (e) {
@@ -1154,7 +1204,62 @@
             }
         }
 
-        /* ---------- Panel de datos de clientes (solo admin puede leer, por regla de seguridad) ---------- */
+        /* ================== CLIENTES, PEDIDOS Y RECOMENDACIONES (solo admin) ================== */
+
+        let clientsCache = [];   // registros enriquecidos con sus pedidos calculados
+        let ordersCache = [];    // todos los pedidos, para el historial por cliente
+
+        function daysSince(dateStr) {
+            if (!dateStr) return null;
+            const diff = Date.now() - new Date(dateStr).getTime();
+            return Math.floor(diff / 86400000);
+        }
+
+        function buildRecommendation(client) {
+            const distinctDays = new Set(client.orders.map(o => o.date.slice(0, 10))).size;
+            const ds = daysSince(client.lastOrderDate);
+            const milestoneOrder = client.orders.find(o => o.orderNumber === 50 || o.orderNumber === 100);
+
+            if (milestoneOrder) return `🎁 Ganó Pizza Tradicional gratis (pedido global #${milestoneOrder.orderNumber}) — confírmale que la reclame.`;
+            if (client.orders.length === 0) return '👋 Aún no registra pedidos — escríbele mostrando el menú para su primera compra.';
+            if (ds !== null && ds >= 21) return `🔔 Inactivo hace ${ds} días — ofrécele una promo para reactivarlo.`;
+            if (distinctDays < 7) return `🏆 Le faltan ${7 - distinctDays} pedido(s) en días distintos para activar Rewards.`;
+            return '✅ Ya cumple días distintos para Rewards — mantenlo con atención prioritaria.';
+        }
+
+        async function loadClientsAndOrders() {
+            const [regSnap, ordSnap] = await Promise.all([
+                db.collection('registrations').get(),
+                db.collection('orders').orderBy('orderNumber', 'asc').get()
+            ]);
+
+            const registrations = regSnap.docs.map(d => Object.assign({ id: d.id }, d.data()));
+            ordersCache = ordSnap.docs.map(d => Object.assign({ id: d.id }, d.data()));
+
+            // por si un pedido se registró para un whatsapp sin registro previo
+            const knownWhatsapps = new Set(registrations.map(r => r.whatsapp));
+            ordersCache.forEach(o => {
+                if (!knownWhatsapps.has(o.whatsapp)) {
+                    knownWhatsapps.add(o.whatsapp);
+                    registrations.push({ whatsapp: o.whatsapp, name: o.clientName, date: o.date, autoCreated: true });
+                }
+            });
+
+            clientsCache = registrations.map(r => {
+                const orders = ordersCache.filter(o => o.whatsapp === r.whatsapp).sort((a, b) => new Date(b.date) - new Date(a.date));
+                const totalAmount = orders.reduce((sum, o) => sum + (Number(o.amount) || 0), 0);
+                const client = {
+                    name: r.name, whatsapp: r.whatsapp, registeredDate: r.date,
+                    orders, orderCount: orders.length, totalAmount,
+                    lastOrderDate: orders.length ? orders[0].date : null
+                };
+                client.recommendation = buildRecommendation(client);
+                return client;
+            }).sort((a, b) => new Date(b.registeredDate) - new Date(a.registeredDate));
+        }
+
+        function money(n) { return '$' + Number(n || 0).toLocaleString('es-CO'); }
+
         async function openAdminDataModal() {
             if (!isAdmin()) return;
             const wrap = document.getElementById('data-table-wrap');
@@ -1162,43 +1267,160 @@
             openModal('admin-data-modal');
 
             try {
-                const snap = await db.collection('registrations').orderBy('date', 'desc').get();
-                const registrations = snap.docs.map(d => d.data());
-                if (!registrations.length) {
-                    wrap.innerHTML = '<div class="data-empty">Todavía no hay clientes registrados.</div>';
-                } else {
-                    let rows = registrations.map(r => `
-                        <tr>
-                            <td>${r.name}</td>
-                            <td>${r.whatsapp}</td>
-                            <td>${new Date(r.date).toLocaleString('es-CO')}</td>
-                        </tr>`).join('');
-                    wrap.innerHTML = `<table class="data-table">
-                        <thead><tr><th>Nombre y Apellido</th><th>WhatsApp</th><th>Fecha de registro</th></tr></thead>
-                        <tbody>${rows}</tbody>
-                    </table>`;
-                }
+                await loadClientsAndOrders();
+                renderClientsTable();
+                refreshWhatsappDatalist();
             } catch (e) {
+                console.error(e);
                 wrap.innerHTML = '<div class="data-empty">No se pudo cargar (revisa las reglas de seguridad de Firestore).</div>';
+            }
+        }
+
+        function renderClientsTable() {
+            const wrap = document.getElementById('data-table-wrap');
+            if (!clientsCache.length) {
+                wrap.innerHTML = '<div class="data-empty">Todavía no hay clientes registrados.</div>';
+                return;
+            }
+            const rows = clientsCache.map((c, i) => `
+                <tr style="cursor:pointer;" onclick="openClientHistory(${i})">
+                    <td>${c.name || '—'}</td>
+                    <td>${c.whatsapp}</td>
+                    <td>${c.orderCount}</td>
+                    <td>${money(c.totalAmount)}</td>
+                    <td>${c.lastOrderDate ? new Date(c.lastOrderDate).toLocaleDateString('es-CO') : '—'}</td>
+                    <td style="font-size:0.78rem;">${c.recommendation}</td>
+                </tr>`).join('');
+            wrap.innerHTML = `<table class="data-table">
+                <thead><tr><th>Nombre</th><th>WhatsApp</th><th>Pedidos</th><th>Total Gastado</th><th>Última Compra</th><th>Recomendación</th></tr></thead>
+                <tbody>${rows}</tbody>
+            </table>`;
+        }
+
+        function openClientHistory(index) {
+            const c = clientsCache[index];
+            document.getElementById('history-client-name').innerText = c.name || c.whatsapp;
+            document.getElementById('history-client-sub').innerText = `${c.whatsapp} · ${c.orderCount} pedido(s) · Total ${money(c.totalAmount)}`;
+            const wrap = document.getElementById('history-table-wrap');
+
+            if (!c.orders.length) {
+                wrap.innerHTML = '<div class="data-empty">Este cliente aún no tiene pedidos registrados.</div>';
+            } else {
+                const rows = c.orders.map(o => `
+                    <tr>
+                        <td>#${o.orderNumber}${(o.orderNumber === 50 || o.orderNumber === 100) ? ' 🎁' : ''}</td>
+                        <td>${new Date(o.date).toLocaleDateString('es-CO')}</td>
+                        <td>${o.items || '—'}</td>
+                        <td>${money(o.amount)}</td>
+                    </tr>`).join('');
+                wrap.innerHTML = `<table class="data-table">
+                    <thead><tr><th>Pedido #</th><th>Fecha</th><th>Productos</th><th>Monto</th></tr></thead>
+                    <tbody>${rows}</tbody>
+                </table>`;
+            }
+            openModal('client-history-modal');
+        }
+
+        function refreshWhatsappDatalist() {
+            const list = document.getElementById('of-whatsapp-list');
+            list.innerHTML = clientsCache.map(c => `<option value="${c.whatsapp}">${c.name || ''}</option>`).join('');
+        }
+
+        function autofillOrderClientName() {
+            const wa = document.getElementById('of-whatsapp').value.trim();
+            const match = clientsCache.find(c => c.whatsapp === wa);
+            if (match) document.getElementById('of-name').value = match.name || '';
+        }
+
+        function openOrderForm() {
+            document.getElementById('of-whatsapp').value = '';
+            document.getElementById('of-name').value = '';
+            document.getElementById('of-items').value = '';
+            document.getElementById('of-amount').value = '';
+            document.getElementById('of-date').value = new Date().toISOString().slice(0, 10);
+            document.getElementById('of-error').classList.remove('show');
+            openModal('order-form-modal');
+        }
+
+        async function saveOrderForm() {
+            const whatsapp = document.getElementById('of-whatsapp').value.trim();
+            const name = document.getElementById('of-name').value.trim();
+            const items = document.getElementById('of-items').value.trim();
+            const amount = Number(document.getElementById('of-amount').value);
+            const dateInput = document.getElementById('of-date').value.trim();
+            const date = dateInput ? new Date(dateInput).toISOString() : new Date().toISOString();
+
+            if (!whatsapp || !name || !amount) {
+                document.getElementById('of-error').classList.add('show');
+                return;
+            }
+
+            const submitBtn = document.querySelector('#order-form-modal .modal-form-submit');
+            submitBtn.disabled = true;
+            submitBtn.innerText = 'Guardando...';
+
+            try {
+                await db.runTransaction(async (tx) => {
+                    const counterRef = db.collection('meta').doc('orderCounter');
+                    const counterDoc = await tx.get(counterRef);
+                    const nextNumber = (counterDoc.exists ? counterDoc.data().total : 0) + 1;
+                    tx.set(counterRef, { total: nextNumber });
+
+                    const orderRef = db.collection('orders').doc();
+                    tx.set(orderRef, { whatsapp, clientName: name, items, amount, date, orderNumber: nextNumber });
+                });
+
+                const regRef = db.collection('registrations').doc(whatsapp);
+                const regDoc = await regRef.get();
+                if (regDoc.exists) {
+                    await regRef.set({ name }, { merge: true });
+                } else {
+                    await regRef.set({ name, whatsapp, date: new Date().toISOString() });
+                }
+
+                closeModal('order-form-modal');
+                await loadClientsAndOrders();
+                renderClientsTable();
+                refreshWhatsappDatalist();
+            } catch (e) {
+                console.error(e);
+                alert('No se pudo guardar el pedido. Verifica tu conexión.');
+            } finally {
+                submitBtn.disabled = false;
+                submitBtn.innerText = 'Guardar Pedido';
             }
         }
 
         async function downloadRegistrationsExcel() {
             if (!isAdmin()) return;
             try {
-                const snap = await db.collection('registrations').orderBy('date', 'desc').get();
-                const registrations = snap.docs.map(d => d.data());
-                if (!registrations.length) { alert('No hay datos de clientes para descargar todavía.'); return; }
-                const data = registrations.map(r => ({
-                    'Nombre y Apellido': r.name,
-                    'WhatsApp': r.whatsapp,
-                    'Fecha de Registro': new Date(r.date).toLocaleString('es-CO')
+                if (!clientsCache.length) await loadClientsAndOrders();
+                if (!clientsCache.length) { alert('No hay datos de clientes para descargar todavía.'); return; }
+
+                const clientRows = clientsCache.map(c => ({
+                    'Nombre y Apellido': c.name || '',
+                    'WhatsApp': c.whatsapp,
+                    'Fecha de Registro': c.registeredDate ? new Date(c.registeredDate).toLocaleString('es-CO') : '',
+                    'Pedidos Realizados': c.orderCount,
+                    'Total Gastado': c.totalAmount,
+                    'Última Compra': c.lastOrderDate ? new Date(c.lastOrderDate).toLocaleString('es-CO') : '',
+                    'Recomendación': c.recommendation
                 }));
-                const ws = XLSX.utils.json_to_sheet(data);
+                const orderRows = ordersCache.map(o => ({
+                    'Pedido #': o.orderNumber,
+                    'Cliente': o.clientName,
+                    'WhatsApp': o.whatsapp,
+                    'Fecha': new Date(o.date).toLocaleString('es-CO'),
+                    'Productos': o.items,
+                    'Monto': o.amount
+                }));
+
                 const wb = XLSX.utils.book_new();
-                XLSX.utils.book_append_sheet(wb, ws, 'Clientes');
+                XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(clientRows), 'Clientes');
+                XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(orderRows), 'Pedidos');
                 XLSX.writeFile(wb, `HORNO28_Clientes_${new Date().toISOString().slice(0,10)}.xlsx`);
             } catch (e) {
+                console.error(e);
                 alert('No se pudo generar el archivo. Intenta de nuevo.');
             }
         }
