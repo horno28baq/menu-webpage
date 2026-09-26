@@ -420,6 +420,15 @@
         }
         .form-field textarea { min-height: 70px; resize: vertical; }
         .form-field input[type="file"] { color: #aaa; font-size: 0.8rem; }
+        select, .form-field select { color-scheme: dark; }
+        select option, select optgroup {
+            background-color: var(--carbon);
+            color: var(--white);
+        }
+        select option:checked, select option:hover {
+            background-color: var(--red-f1);
+            color: var(--white);
+        }
         .form-error { color: var(--red-f1); font-size: 0.8rem; margin-top: 8px; display: none; }
         .form-error.show { display: block; }
         .form-success { color: #6ee56e; font-size: 0.85rem; margin-top: 8px; display: none; }
