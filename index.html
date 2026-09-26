@@ -716,12 +716,14 @@
         <div class="modal-card modal-wide">
             <div class="modal-body">
                 <h3 class="modal-title" style="margin-bottom: 1rem;">📊 Clientes &amp; Rewards</h3>
-                <div class="modal-actions" style="margin-bottom: 1rem;">
+                <div class="modal-actions" style="margin-bottom: 1rem; flex-wrap: wrap;">
                     <button class="modal-form-submit" style="flex:none; padding:10px 20px;" onclick="openOrderForm()">+ Registrar Pedido</button>
                     <button class="modal-form-submit" style="flex:none; padding:10px 20px; background:var(--gold); color:#1a1a1a;" onclick="downloadRegistrationsExcel()">⬇️ Descargar Excel</button>
+                    <button class="modal-form-submit" id="btn-edit-client" style="flex:none; padding:10px 20px; background:#444;" disabled onclick="openClientEditModal()">✏️ Editar Cliente</button>
+                    <button class="modal-form-submit" id="btn-delete-client" style="flex:none; padding:10px 20px; background:var(--red-f1);" disabled onclick="deleteSelectedClient()">🗑️ Eliminar Cliente</button>
                 </div>
                 <div class="data-table-wrap" id="data-table-wrap"></div>
-                <p class="admin-note">🎁 = pedido global #50 o #100 del restaurante (pizza gratis). Haz clic en un cliente para ver su historial de pedidos.</p>
+                <p class="admin-note">Selecciona un cliente (círculo a la izquierda) para editarlo o eliminarlo. 🎁 = pedido global #50 o #100 (pizza gratis). Clic en el nombre para ver su historial.</p>
                 <div class="modal-actions">
                     <button class="modal-form-cancel" onclick="closeModal('admin-data-modal')">Cerrar</button>
                 </div>
@@ -743,6 +745,27 @@
         </div>
     </div>
 
+    <!-- MODAL: Editar cliente -->
+    <div id="client-edit-modal" class="modal-overlay" onclick="closeModalOnOuterClick(event, 'client-edit-modal')">
+        <div class="modal-card">
+            <div class="modal-body">
+                <h3 class="modal-title" style="margin-bottom: 1rem;">✏️ Editar Cliente</h3>
+                <div class="form-field">
+                    <label>WhatsApp (no editable — es el identificador del cliente)</label>
+                    <input type="text" id="ce-whatsapp" disabled>
+                </div>
+                <div class="form-field">
+                    <label>Nombre y Apellido</label>
+                    <input type="text" id="ce-name">
+                </div>
+                <div class="modal-actions">
+                    <button class="modal-form-submit" onclick="saveClientEdit()">Guardar Cambios</button>
+                    <button class="modal-form-cancel" onclick="closeModal('client-edit-modal')">Cancelar</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- MODAL: Registrar pedido (solo admin) -->
     <div id="order-form-modal" class="modal-overlay" onclick="closeModalOnOuterClick(event, 'order-form-modal')">
         <div class="modal-card">
@@ -758,18 +781,26 @@
                     <input type="text" id="of-name" placeholder="Se autocompleta si ya está registrado">
                 </div>
                 <div class="form-field">
-                    <label>Productos pedidos</label>
-                    <textarea id="of-items" placeholder="Ej: 1 Pizza Carnívora, 1 Pan de Jamón"></textarea>
+                    <label>Agregar producto del menú</label>
+                    <div style="display:flex; gap:8px;">
+                        <select id="of-product-select" style="flex:1; background: rgba(255,255,255,0.05); border: 1px solid #333; border-radius: 6px; padding: 10px 12px; color: var(--white); font-size: 0.85rem;"></select>
+                        <input type="number" id="of-product-qty" value="1" min="1" style="width:60px; background: rgba(255,255,255,0.05); border: 1px solid #333; border-radius: 6px; color: var(--white); text-align:center;">
+                        <button type="button" class="modal-form-submit" style="flex:none; padding:8px 16px;" onclick="addOrderItem()">+</button>
+                    </div>
+                </div>
+                <div class="form-field">
+                    <label>Productos en este pedido</label>
+                    <ul id="of-items-list" style="list-style:none; font-size:0.85rem;"></ul>
                 </div>
                 <div class="form-field">
                     <label>Monto total ($ COP)</label>
-                    <input type="number" id="of-amount" placeholder="Ej: 65000">
+                    <input type="number" id="of-amount" placeholder="Se calcula solo si todos los productos tienen precio">
                 </div>
                 <div class="form-field">
                     <label>Fecha del pedido</label>
                     <input type="text" id="of-date" placeholder="AAAA-MM-DD">
                 </div>
-                <div class="form-error" id="of-error">Completa el WhatsApp, el nombre y el monto.</div>
+                <div class="form-error" id="of-error">Completa el WhatsApp, el nombre, al menos un producto y el monto.</div>
                 <div class="modal-actions">
                     <button class="modal-form-submit" onclick="saveOrderForm()">Guardar Pedido</button>
                     <button class="modal-form-cancel" onclick="closeModal('order-form-modal')">Cancelar</button>
@@ -1276,25 +1307,87 @@
             }
         }
 
+        let selectedClientWhatsapp = null;
+
         function renderClientsTable() {
             const wrap = document.getElementById('data-table-wrap');
+            selectedClientWhatsapp = null;
+            updateClientActionButtons();
             if (!clientsCache.length) {
                 wrap.innerHTML = '<div class="data-empty">Todavía no hay clientes registrados.</div>';
                 return;
             }
             const rows = clientsCache.map((c, i) => `
-                <tr style="cursor:pointer;" onclick="openClientHistory(${i})">
-                    <td>${c.name || '—'}</td>
+                <tr>
+                    <td onclick="event.stopPropagation();"><input type="radio" name="client-select" onclick="selectClientRadio('${c.whatsapp}')"></td>
+                    <td style="cursor:pointer;" onclick="openClientHistory(${i})">${c.name || '—'}</td>
                     <td>${c.whatsapp}</td>
+                    <td>${c.registeredDate ? new Date(c.registeredDate).toLocaleDateString('es-CO') : '—'}</td>
                     <td>${c.orderCount}</td>
                     <td>${money(c.totalAmount)}</td>
                     <td>${c.lastOrderDate ? new Date(c.lastOrderDate).toLocaleDateString('es-CO') : '—'}</td>
                     <td style="font-size:0.78rem;">${c.recommendation}</td>
                 </tr>`).join('');
             wrap.innerHTML = `<table class="data-table">
-                <thead><tr><th>Nombre</th><th>WhatsApp</th><th>Pedidos</th><th>Total Gastado</th><th>Última Compra</th><th>Recomendación</th></tr></thead>
+                <thead><tr><th></th><th>Nombre</th><th>WhatsApp</th><th>Fecha de Registro</th><th>Pedidos</th><th>Total Gastado</th><th>Última Compra</th><th>Recomendación</th></tr></thead>
                 <tbody>${rows}</tbody>
             </table>`;
+        }
+
+        function selectClientRadio(whatsapp) {
+            selectedClientWhatsapp = whatsapp;
+            updateClientActionButtons();
+        }
+
+        function updateClientActionButtons() {
+            const has = !!selectedClientWhatsapp;
+            document.getElementById('btn-edit-client').disabled = !has;
+            document.getElementById('btn-delete-client').disabled = !has;
+        }
+
+        function openClientEditModal() {
+            if (!selectedClientWhatsapp) return;
+            const c = clientsCache.find(x => x.whatsapp === selectedClientWhatsapp);
+            if (!c) return;
+            document.getElementById('ce-whatsapp').value = c.whatsapp;
+            document.getElementById('ce-name').value = c.name || '';
+            openModal('client-edit-modal');
+        }
+
+        async function saveClientEdit() {
+            const name = document.getElementById('ce-name').value.trim();
+            if (!name || !selectedClientWhatsapp) return;
+            try {
+                await db.collection('registrations').doc(selectedClientWhatsapp).set({ name }, { merge: true });
+                closeModal('client-edit-modal');
+                await loadClientsAndOrders();
+                renderClientsTable();
+                refreshWhatsappDatalist();
+            } catch (e) {
+                console.error(e);
+                alert('No se pudo guardar el cambio.');
+            }
+        }
+
+        async function deleteSelectedClient() {
+            if (!selectedClientWhatsapp) return;
+            const c = clientsCache.find(x => x.whatsapp === selectedClientWhatsapp);
+            const confirmMsg = `¿Eliminar a "${c.name || c.whatsapp}" y sus ${c.orderCount} pedido(s) registrados? Esta acción no se puede deshacer.`;
+            if (!confirm(confirmMsg)) return;
+
+            try {
+                const batch = db.batch();
+                batch.delete(db.collection('registrations').doc(selectedClientWhatsapp));
+                c.orders.forEach(o => batch.delete(db.collection('orders').doc(o.id)));
+                await batch.commit();
+
+                await loadClientsAndOrders();
+                renderClientsTable();
+                refreshWhatsappDatalist();
+            } catch (e) {
+                console.error(e);
+                alert('No se pudo eliminar el cliente.');
+            }
         }
 
         function openClientHistory(index) {
@@ -1332,25 +1425,84 @@
             if (match) document.getElementById('of-name').value = match.name || '';
         }
 
+        let orderItemsRunning = [];
+
+        function parsePriceNumber(priceStr) {
+            if (!priceStr) return null;
+            const digits = String(priceStr).replace(/[^\d]/g, '');
+            return digits ? Number(digits) : null;
+        }
+
+        function populateProductSelect() {
+            const select = document.getElementById('of-product-select');
+            const groupLabels = { 'pizzas': '🍕 Pizzas', 'panes-varios': '🥖 Panes Varios' };
+            const groupsHtml = Object.keys(groupLabels).map(cat => {
+                const opts = productsCache.filter(p => p.category === cat).map(p =>
+                    `<option value="${p.id}">${p.name}${p.price ? ' — ' + p.price : ''}</option>`
+                ).join('');
+                return opts ? `<optgroup label="${groupLabels[cat]}">${opts}</optgroup>` : '';
+            }).join('');
+            select.innerHTML = groupsHtml || '<option value="">No hay productos cargados todavía</option>';
+        }
+
+        function addOrderItem() {
+            const select = document.getElementById('of-product-select');
+            const id = select.value;
+            const qty = Math.max(1, Number(document.getElementById('of-product-qty').value) || 1);
+            const p = productsCache.find(x => x.id === id);
+            if (!p) return;
+            orderItemsRunning.push({ id: p.id, name: p.name, qty, price: parsePriceNumber(p.price) });
+            document.getElementById('of-product-qty').value = 1;
+            renderOrderItemsList();
+            recalcOrderAmount();
+        }
+
+        function removeOrderItem(idx) {
+            orderItemsRunning.splice(idx, 1);
+            renderOrderItemsList();
+            recalcOrderAmount();
+        }
+
+        function renderOrderItemsList() {
+            const list = document.getElementById('of-items-list');
+            if (!orderItemsRunning.length) {
+                list.innerHTML = '<li style="color:#888;">Aún no has agregado productos.</li>';
+                return;
+            }
+            list.innerHTML = orderItemsRunning.map((it, i) => `
+                <li style="display:flex; justify-content:space-between; align-items:center; padding:5px 0; border-bottom:1px solid rgba(255,255,255,0.06);">
+                    <span>${it.qty}x ${it.name}${it.price ? ' — ' + money(it.price * it.qty) : ' — sin precio'}</span>
+                    <button type="button" onclick="removeOrderItem(${i})" style="background:none; border:none; color:var(--red-f1); cursor:pointer; font-weight:700;">✕</button>
+                </li>`).join('');
+        }
+
+        function recalcOrderAmount() {
+            if (orderItemsRunning.length && orderItemsRunning.every(it => it.price != null)) {
+                document.getElementById('of-amount').value = orderItemsRunning.reduce((s, it) => s + it.price * it.qty, 0);
+            }
+        }
+
         function openOrderForm() {
             document.getElementById('of-whatsapp').value = '';
             document.getElementById('of-name').value = '';
-            document.getElementById('of-items').value = '';
             document.getElementById('of-amount').value = '';
             document.getElementById('of-date').value = new Date().toISOString().slice(0, 10);
             document.getElementById('of-error').classList.remove('show');
+            orderItemsRunning = [];
+            populateProductSelect();
+            renderOrderItemsList();
             openModal('order-form-modal');
         }
 
         async function saveOrderForm() {
             const whatsapp = document.getElementById('of-whatsapp').value.trim();
             const name = document.getElementById('of-name').value.trim();
-            const items = document.getElementById('of-items').value.trim();
+            const items = orderItemsRunning.map(it => `${it.qty}x ${it.name}`).join(', ');
             const amount = Number(document.getElementById('of-amount').value);
             const dateInput = document.getElementById('of-date').value.trim();
             const date = dateInput ? new Date(dateInput).toISOString() : new Date().toISOString();
 
-            if (!whatsapp || !name || !amount) {
+            if (!whatsapp || !name || !orderItemsRunning.length || !amount) {
                 document.getElementById('of-error').classList.add('show');
                 return;
             }
