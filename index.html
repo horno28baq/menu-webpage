@@ -782,8 +782,9 @@
                     <button class="modal-form-submit" id="btn-edit-client" style="flex:none; padding:10px 20px; background:#444;" disabled onclick="openClientEditModal()">✏️ Editar Cliente</button>
                     <button class="modal-form-submit" id="btn-delete-client" style="flex:none; padding:10px 20px; background:var(--red-f1);" disabled onclick="deleteSelectedClient()">🗑️ Eliminar Cliente</button>
                 </div>
+                <div id="rewards-alert-box" style="display:none; margin-bottom:1rem;"></div>
                 <div class="data-table-wrap" id="data-table-wrap"></div>
-                <p class="admin-note">Selecciona un cliente (círculo a la izquierda) para editarlo o eliminarlo. 🎁 = pedido que activó un premio de secuencia (cada 30). Clic en el nombre para ver su historial.</p>
+                <p class="admin-note">Selecciona un cliente (círculo a la izquierda) para editarlo o eliminarlo. 🎁 = pedido que activó un premio de secuencia (cada 30). 🚨 = tiene un reward pendiente de confirmar. Clic en el nombre para ver su historial.</p>
                 <div class="modal-actions">
                     <button class="modal-form-cancel" onclick="closeModal('admin-data-modal')">Cerrar</button>
                 </div>
@@ -813,20 +814,21 @@
     <div id="sim-modal" class="modal-overlay" onclick="closeModalOnOuterClick(event, 'sim-modal')">
         <div class="modal-card">
             <div class="modal-body">
-                <h3 class="modal-title" style="margin-bottom: 1rem;">🧪 Simular Contador</h3>
+                <h3 class="modal-title" style="margin-bottom: 1rem;">🧪 Simular Contador (aislado)</h3>
                 <p class="admin-note" style="margin-top:0; margin-bottom:1rem; border-top:none; padding-top:0;">
-                    Esto suma pedidos de PRUEBA al contador real (para ver si la sirena funciona), sin crear un pedido de verdad ni asociarlo a ningún cliente. Cuando termines de probar, usa "Reiniciar Contadores" para dejarlo en 0 otra vez.
+                    Este contador es 100% independiente del contador real de Pedidos Totales — solo sirve para probar que la sirena suena bien. Nunca afecta tus pedidos reales ni el panel de arriba.
                 </p>
                 <div class="milestone-box" style="margin-bottom:1rem;">
-                    <div class="milestone-label">Pedido Actual Total</div>
+                    <div class="milestone-label">Pedido Actual Total (de prueba)</div>
                     <div class="milestone-value" id="sim-total-value">0</div>
                 </div>
                 <div class="milestone-box" id="sim-sequence-box" style="margin-bottom:1rem;">
-                    <div class="milestone-label">Pedido En Secuencia</div>
+                    <div class="milestone-label">Pedido En Secuencia (de prueba)</div>
                     <div class="milestone-value" id="sim-sequence-value">0</div>
                 </div>
                 <div class="modal-actions">
                     <button class="modal-form-submit" onclick="simAddOrder()">+ Añadir Pedido</button>
+                    <button class="modal-form-cancel" style="background:#444;" onclick="resetSimCounter()">↺ Reiniciar Simulación</button>
                     <button class="modal-form-cancel" onclick="closeModal('sim-modal')">Cerrar</button>
                 </div>
             </div>
@@ -841,6 +843,7 @@
                 <p class="modal-subtitle" id="history-client-sub" style="margin-bottom:1rem;"></p>
 
                 <div id="history-reward-banner" style="display:none; background:rgba(212,175,55,0.12); border:1px solid var(--gold); border-radius:8px; padding:12px 16px; margin-bottom:1rem; font-size:0.88rem; color:#e9d9a6;"></div>
+                <div id="history-illbeback-banner" style="display:none; background:rgba(225,6,0,0.12); border:1px solid var(--red-f1); border-radius:8px; padding:12px 16px; margin-bottom:1rem; font-size:0.88rem; color:#f5c9c7;"></div>
 
                 <div class="milestone-box" id="history-reward-summary" style="margin-bottom:1rem; text-align:left;">
                     <div class="milestone-label">🏆 Rewards Ganados</div>
@@ -850,6 +853,7 @@
                 <div class="data-table-wrap" id="history-table-wrap"></div>
                 <div class="modal-actions">
                     <button class="modal-form-submit" id="history-confirm-btn" style="display:none; background:#6ee56e; color:#1a1a1a;" onclick="confirmClientReward()">✅ Confirmar y Otorgar Premio</button>
+                    <button class="modal-form-submit" id="history-confirm-illbeback-btn" style="display:none; background:#6ee56e; color:#1a1a1a;" onclick="confirmIllBeBackReward()">✅ Confirmar Activación "I'll be back…"</button>
                     <button class="modal-form-cancel" onclick="closeModal('client-history-modal')">Cerrar</button>
                 </div>
             </div>
@@ -1446,16 +1450,30 @@
             );
         }
 
+        const ILL_BE_BACK_REWARD = "I'll be back… (perfil de recompensas)";
+
+        function distinctOrderDays(client) {
+            return new Set(client.orders.map(o => o.date.slice(0, 10))).size;
+        }
+
+        function pendingIllBeBack(client) {
+            const distinctDays = distinctOrderDays(client);
+            const alreadyWon = (client.rewardsWon || []).some(rw => rw.reward === ILL_BE_BACK_REWARD);
+            return distinctDays >= 7 && !alreadyWon;
+        }
+
         function buildRecommendation(client) {
-            const distinctDays = new Set(client.orders.map(o => o.date.slice(0, 10))).size;
+            const distinctDays = distinctOrderDays(client);
             const ds = daysSince(client.lastOrderDate);
             const milestoneOrder = pendingMilestoneOrder(client);
+            const illBeBackPending = pendingIllBeBack(client);
 
             if (milestoneOrder) return `🎁 Ganó el premio "Mine… Mine… Mine…" (pedido global #${milestoneOrder.orderNumber}) — confírmale que lo reclame.`;
+            if (illBeBackPending) return `🚨 ¡Completó 7 pedidos en días distintos! Activa su Reward "I'll be back…" — confírmalo en su historial.`;
             if (client.orders.length === 0) return '👋 Aún no registra pedidos — escríbele mostrando el menú para su primera compra.';
             if (ds !== null && ds >= 21) return `🔔 Inactivo hace ${ds} días — ofrécele una promo para reactivarlo.`;
             if (distinctDays < 7) return `🏆 Le faltan ${7 - distinctDays} pedido(s) en días distintos para activar Rewards.`;
-            return '✅ Ya cumple días distintos para Rewards — mantenlo con atención prioritaria.';
+            return '✅ Ya activó su perfil de Rewards — mantenlo con atención prioritaria.';
         }
 
         async function loadClientsAndOrders() {
@@ -1608,9 +1626,14 @@
         }
 
         async function openSimModal() {
-            const meta = await getMilestoneMeta();
+            const meta = await getSimMeta();
             updateSimDisplay(meta.total || 0);
             openModal('sim-modal');
+        }
+
+        async function getSimMeta() {
+            const doc = await db.collection('meta').doc('simCounter').get();
+            return doc.exists ? doc.data() : { total: 0 };
         }
 
         function updateSimDisplay(total) {
@@ -1620,28 +1643,42 @@
             document.getElementById('sim-sequence-box').classList.toggle('siren-active', total > 0 && total % 30 === 0);
         }
 
+        let lastSimSirenTotal = null;
+
         async function simAddOrder() {
             try {
                 const newTotal = await db.runTransaction(async (tx) => {
-                    const counterRef = db.collection('meta').doc('orderCounter');
+                    const counterRef = db.collection('meta').doc('simCounter');
                     const counterDoc = await tx.get(counterRef);
                     const next = (counterDoc.exists ? counterDoc.data().total : 0) + 1;
                     tx.set(counterRef, { total: next }, { merge: true });
                     return next;
                 });
                 updateSimDisplay(newTotal);
-                if (newTotal % 30 === 0 && lastSirenTotal !== newTotal) {
+                if (newTotal % 30 === 0 && lastSimSirenTotal !== newTotal) {
                     playSirenSound();
                 }
-                lastSirenTotal = newTotal;
-                await loadMilestoneCounter();
+                lastSimSirenTotal = newTotal;
             } catch (e) {
                 console.error(e);
                 alert('No se pudo simular el pedido.');
             }
         }
 
+        async function resetSimCounter() {
+            try {
+                await db.collection('meta').doc('simCounter').set({ total: 0 });
+                lastSimSirenTotal = null;
+                updateSimDisplay(0);
+            } catch (e) {
+                console.error(e);
+                alert('No se pudo reiniciar la simulación.');
+            }
+        }
+
         let selectedClientWhatsapp = null;
+
+        let alertedRewardKeys = new Set(); // evita repetir el sonido para la misma alerta ya vista en esta sesión
 
         function renderClientsTable() {
             const wrap = document.getElementById('data-table-wrap');
@@ -1649,23 +1686,63 @@
             updateClientActionButtons();
             if (!clientsCache.length) {
                 wrap.innerHTML = '<div class="data-empty">Todavía no hay clientes registrados.</div>';
+                document.getElementById('rewards-alert-box').style.display = 'none';
                 return;
             }
-            const rows = clientsCache.map((c, i) => `
+
+            const pendingList = [];
+            const rows = clientsCache.map((c, i) => {
+                const hasMilestone = !!pendingMilestoneOrder(c);
+                const hasIllBeBack = pendingIllBeBack(c);
+                if (hasMilestone) pendingList.push({ client: c, index: i, type: 'milestone' });
+                if (hasIllBeBack) pendingList.push({ client: c, index: i, type: 'illbeback' });
+                const sirenBadge = (hasMilestone || hasIllBeBack)
+                    ? ` <span class="siren-active" style="display:inline-block; border-radius:50%; padding:2px 6px; font-size:0.75rem;" title="Reward pendiente de confirmar">🚨</span>`
+                    : '';
+                return `
                 <tr>
                     <td onclick="event.stopPropagation();"><input type="radio" name="client-select" onclick="selectClientRadio('${c.whatsapp}')"></td>
-                    <td style="cursor:pointer;" onclick="openClientHistory(${i})">${c.name || '—'}</td>
+                    <td style="cursor:pointer;" onclick="openClientHistory(${i})">${c.name || '—'}${sirenBadge}</td>
                     <td>${c.whatsapp}</td>
                     <td>${c.registeredDate ? new Date(c.registeredDate).toLocaleDateString('es-CO') : '—'}</td>
                     <td>${c.orderCount}</td>
                     <td>${money(c.totalAmount)}</td>
                     <td>${c.lastOrderDate ? new Date(c.lastOrderDate).toLocaleDateString('es-CO') : '—'}</td>
                     <td style="font-size:0.78rem;">${c.recommendation}</td>
-                </tr>`).join('');
+                </tr>`;
+            }).join('');
             wrap.innerHTML = `<table class="data-table">
                 <thead><tr><th></th><th>Nombre</th><th>WhatsApp</th><th>Fecha de Registro</th><th>Pedidos</th><th>Total Gastado</th><th>Última Compra</th><th>Recomendación</th></tr></thead>
                 <tbody>${rows}</tbody>
             </table>`;
+
+            renderRewardsAlertBox(pendingList);
+        }
+
+        function renderRewardsAlertBox(pendingList) {
+            const box = document.getElementById('rewards-alert-box');
+            if (!pendingList.length) {
+                box.style.display = 'none';
+                return;
+            }
+            box.style.display = 'block';
+            box.className = 'siren-active';
+            box.style.border = '1px solid var(--red-f1)';
+            box.style.borderRadius = '8px';
+            box.style.padding = '12px 16px';
+
+            const items = pendingList.map(p => {
+                const label = p.type === 'milestone' ? '🎁 "Mine… Mine… Mine…"' : '🚨 "I\'ll be back…"';
+                return `<li style="margin-bottom:4px;"><a href="javascript:void(0)" onclick="openClientHistory(${p.index})" style="color:var(--white); text-decoration:underline;">${p.client.name || p.client.whatsapp}</a> — ${label} pendiente de confirmar</li>`;
+            }).join('');
+            box.innerHTML = `<b style="color:var(--white);">🚨 Rewards pendientes de confirmar (${pendingList.length})</b>
+                <ul style="list-style:none; margin-top:8px; font-size:0.85rem; color:#eee;">${items}</ul>`;
+
+            const newKeys = pendingList.map(p => `${p.client.whatsapp}:${p.type}`);
+            const hasNew = newKeys.some(k => !alertedRewardKeys.has(k));
+            if (hasNew) playSirenSound();
+            newKeys.forEach(k => alertedRewardKeys.add(k));
+        }
         }
 
         function selectClientRadio(whatsapp) {
@@ -1750,6 +1827,21 @@
             }
             confirmBtn.style.display = pending ? 'inline-flex' : 'none';
 
+            const illBeBackPending = pendingIllBeBack(c);
+            const illBeBackWon = rewardsWon.some(rw => rw.reward === ILL_BE_BACK_REWARD);
+            const illBanner = document.getElementById('history-illbeback-banner');
+            const illConfirmBtn = document.getElementById('history-confirm-illbeback-btn');
+
+            if (illBeBackPending || illBeBackWon) {
+                illBanner.style.display = 'block';
+                illBanner.innerHTML = illBeBackPending
+                    ? `🚨 Este cliente completó <b>7 pedidos en días distintos</b> — Reward <b>"I'll be back…"</b> <span style="color:var(--red-f1);">pendiente de confirmar.</span>`
+                    : `🚨 Este cliente ya activó su Reward <b>"I'll be back…"</b>.`;
+            } else {
+                illBanner.style.display = 'none';
+            }
+            illConfirmBtn.style.display = illBeBackPending ? 'inline-flex' : 'none';
+
             const summaryText = document.getElementById('history-reward-summary-text');
             if (!rewardsWon.length) {
                 summaryText.innerHTML = 'Aún no ha ganado ningún reward.';
@@ -1798,6 +1890,29 @@
             } catch (e) {
                 console.error(e);
                 alert('No se pudo confirmar el premio. Verifica tu conexión.');
+            }
+        }
+
+        async function confirmIllBeBackReward() {
+            if (!currentHistoryWhatsapp) return;
+            const c = clientsCache.find(x => x.whatsapp === currentHistoryWhatsapp);
+            if (!c || !pendingIllBeBack(c)) return;
+
+            try {
+                await db.collection('registrations').doc(currentHistoryWhatsapp).update({
+                    rewardsWon: firebase.firestore.FieldValue.arrayUnion({
+                        date: new Date().toISOString(),
+                        reward: ILL_BE_BACK_REWARD,
+                        orderNumber: null
+                    })
+                });
+                await loadClientsAndOrders();
+                renderClientsTable();
+                const idx = clientsCache.findIndex(x => x.whatsapp === currentHistoryWhatsapp);
+                if (idx >= 0) openClientHistory(idx);
+            } catch (e) {
+                console.error(e);
+                alert('No se pudo confirmar el reward. Verifica tu conexión.');
             }
         }
 
