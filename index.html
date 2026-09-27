@@ -1443,14 +1443,26 @@
             return Math.floor(diff / 86400000);
         }
 
-        function pendingMilestoneOrder(client) {
-            return client.orders.find(o =>
-                o.orderNumber > 0 && o.orderNumber % 30 === 0 &&
-                !(client.rewardsWon || []).some(rw => rw.orderNumber === o.orderNumber)
-            );
+        const MINE_REWARD = 'Mine… Mine… Mine… Mine…';
+        const ILL_BE_BACK_REWARD = "I'll be back… (perfil de recompensas)";
+
+        // Un reward "Mine…" guardado solo cuenta si corresponde a un pedido que TODAVÍA existe con ese número exacto.
+        // Esto evita que datos guardados en pruebas viejas (o pedidos luego eliminados) sigan mostrándose como ganados.
+        function validRewardsWon(client) {
+            const raw = client.rewardsWon || [];
+            return raw.filter(rw => {
+                if (rw.reward !== MINE_REWARD) return true;
+                return client.orders.some(o => o.orderNumber === rw.orderNumber);
+            });
         }
 
-        const ILL_BE_BACK_REWARD = "I'll be back… (perfil de recompensas)";
+        function pendingMilestoneOrder(client) {
+            const valid = validRewardsWon(client);
+            return client.orders.find(o =>
+                o.orderNumber > 0 && o.orderNumber % 30 === 0 &&
+                !valid.some(rw => rw.reward === MINE_REWARD && rw.orderNumber === o.orderNumber)
+            );
+        }
 
         function distinctOrderDays(client) {
             return new Set(client.orders.map(o => o.date.slice(0, 10))).size;
@@ -1497,12 +1509,20 @@
             clientsCache = registrations.map(r => {
                 const orders = ordersCache.filter(o => o.whatsapp === r.whatsapp).sort((a, b) => new Date(b.date) - new Date(a.date));
                 const totalAmount = orders.reduce((sum, o) => sum + (Number(o.amount) || 0), 0);
+                const rawRewards = r.rewardsWon || [];
                 const client = {
                     name: r.name, whatsapp: r.whatsapp, registeredDate: r.date,
                     orders, orderCount: orders.length, totalAmount,
                     lastOrderDate: orders.length ? orders[0].date : null,
-                    rewardsWon: r.rewardsWon || []
+                    rewardsWon: rawRewards
                 };
+                const cleaned = validRewardsWon(client);
+                if (cleaned.length !== rawRewards.length) {
+                    client.rewardsWon = cleaned;
+                    // Limpieza silenciosa en segundo plano: quita de Firestore los rewards "Mine…" fantasma
+                    // (de pedidos que ya no existen), sin bloquear la carga del panel.
+                    db.collection('registrations').doc(r.whatsapp).update({ rewardsWon: cleaned }).catch(() => {});
+                }
                 client.recommendation = buildRecommendation(client);
                 return client;
             }).sort((a, b) => new Date(b.registeredDate) - new Date(a.registeredDate));
@@ -1877,7 +1897,7 @@
                 await db.collection('registrations').doc(currentHistoryWhatsapp).update({
                     rewardsWon: firebase.firestore.FieldValue.arrayUnion({
                         date: new Date().toISOString(),
-                        reward: 'Mine… Mine… Mine… Mine…',
+                        reward: MINE_REWARD,
                         orderNumber: pending.orderNumber
                     })
                 });
