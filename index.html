@@ -839,8 +839,17 @@
             <div class="modal-body">
                 <h3 class="modal-title" id="history-client-name" style="margin-bottom: 0.25rem;">Historial</h3>
                 <p class="modal-subtitle" id="history-client-sub" style="margin-bottom:1rem;"></p>
+
+                <div id="history-reward-banner" style="display:none; background:rgba(212,175,55,0.12); border:1px solid var(--gold); border-radius:8px; padding:12px 16px; margin-bottom:1rem; font-size:0.88rem; color:#e9d9a6;"></div>
+
+                <div class="milestone-box" id="history-reward-summary" style="margin-bottom:1rem; text-align:left;">
+                    <div class="milestone-label">🏆 Rewards Ganados</div>
+                    <div style="font-size:0.9rem; color:#ddd; margin-top:6px;" id="history-reward-summary-text"></div>
+                </div>
+
                 <div class="data-table-wrap" id="history-table-wrap"></div>
                 <div class="modal-actions">
+                    <button class="modal-form-submit" id="history-confirm-btn" style="display:none; background:#6ee56e; color:#1a1a1a;" onclick="confirmClientReward()">✅ Confirmar y Otorgar Premio</button>
                     <button class="modal-form-cancel" onclick="closeModal('client-history-modal')">Cerrar</button>
                 </div>
             </div>
@@ -955,6 +964,9 @@
                 <div class="modal-actions">
                     <button class="modal-form-submit" style="background:var(--red-f1);" onclick="saveProductForm()">Guardar Producto</button>
                     <button class="modal-form-cancel" onclick="closeModal('product-form-modal')">Cancelar</button>
+                </div>
+                <div class="modal-actions" id="pf-delete-row" style="display:none; margin-top:10px;">
+                    <button class="modal-form-cancel" style="background:#7a0000;" onclick="deleteProductFromForm()">🗑️ Eliminar Producto (permanente)</button>
                 </div>
             </div>
         </div>
@@ -1339,7 +1351,25 @@
                 pfImageBase64Preview = null;
             }
             updateProductFormFieldsVisibility(category);
+            document.getElementById('pf-delete-row').style.display = editId ? 'flex' : 'none';
             openModal('product-form-modal');
+        }
+
+        async function deleteProductFromForm() {
+            const id = document.getElementById('pf-id').value;
+            if (!id) return;
+            const p = findProduct(id);
+            const confirmMsg = `¿Eliminar "${p ? p.name : id}" permanentemente? Esto lo borra de todo el sistema y de la base de datos, no se puede deshacer.`;
+            if (!confirm(confirmMsg)) return;
+
+            try {
+                await db.collection('products').doc(id).delete();
+                closeModal('product-form-modal');
+                await loadProducts();
+            } catch (e) {
+                console.error(e);
+                alert('No se pudo eliminar el producto. Verifica tu conexión.');
+            }
         }
 
         document.getElementById('pf-image').addEventListener('change', function(ev) {
@@ -1409,12 +1439,19 @@
             return Math.floor(diff / 86400000);
         }
 
+        function pendingMilestoneOrder(client) {
+            return client.orders.find(o =>
+                o.orderNumber > 0 && o.orderNumber % 30 === 0 &&
+                !(client.rewardsWon || []).some(rw => rw.orderNumber === o.orderNumber)
+            );
+        }
+
         function buildRecommendation(client) {
             const distinctDays = new Set(client.orders.map(o => o.date.slice(0, 10))).size;
             const ds = daysSince(client.lastOrderDate);
-            const milestoneOrder = client.orders.find(o => o.orderNumber > 0 && o.orderNumber % 30 === 0);
+            const milestoneOrder = pendingMilestoneOrder(client);
 
-            if (milestoneOrder) return `🎁 Ganó el premio de secuencia (pedido global #${milestoneOrder.orderNumber}) — confírmale que lo reclame.`;
+            if (milestoneOrder) return `🎁 Ganó el premio "Mine… Mine… Mine…" (pedido global #${milestoneOrder.orderNumber}) — confírmale que lo reclame.`;
             if (client.orders.length === 0) return '👋 Aún no registra pedidos — escríbele mostrando el menú para su primera compra.';
             if (ds !== null && ds >= 21) return `🔔 Inactivo hace ${ds} días — ofrécele una promo para reactivarlo.`;
             if (distinctDays < 7) return `🏆 Le faltan ${7 - distinctDays} pedido(s) en días distintos para activar Rewards.`;
@@ -1445,7 +1482,8 @@
                 const client = {
                     name: r.name, whatsapp: r.whatsapp, registeredDate: r.date,
                     orders, orderCount: orders.length, totalAmount,
-                    lastOrderDate: orders.length ? orders[0].date : null
+                    lastOrderDate: orders.length ? orders[0].date : null,
+                    rewardsWon: r.rewardsWon || []
                 };
                 client.recommendation = buildRecommendation(client);
                 return client;
@@ -1538,8 +1576,11 @@
                 const relevantOrders = resetAt ? ordersCache.filter(o => o.date >= resetAt) : ordersCache;
                 const winnerOrder = relevantOrders.find(o => o.orderNumber === lastMilestone);
                 if (winnerOrder) {
-                    winnerValueEl.innerText = winnerOrder.clientName || winnerOrder.whatsapp;
-                    winnerSubEl.innerText = `Pedido global #${lastMilestone} · ${winnerOrder.whatsapp} · ${new Date(winnerOrder.date).toLocaleDateString('es-CO')}`;
+                    const client = clientsCache.find(c => c.whatsapp === winnerOrder.whatsapp);
+                    const displayName = (client && client.name) || winnerOrder.clientName || winnerOrder.whatsapp;
+                    const confirmed = client && (client.rewardsWon || []).some(rw => rw.orderNumber === lastMilestone);
+                    winnerValueEl.innerText = displayName;
+                    winnerSubEl.innerText = `Pedido global #${lastMilestone} · ${winnerOrder.whatsapp} · ${new Date(winnerOrder.date).toLocaleDateString('es-CO')} · ${confirmed ? '✅ Premio confirmado' : '⏳ Pendiente de confirmar'}`;
                 } else {
                     winnerValueEl.innerText = 'Sin cliente asociado';
                     winnerSubEl.innerText = `El pedido #${lastMilestone} fue de prueba (simulación) — sin cliente real.`;
@@ -1683,11 +1724,39 @@
             }
         }
 
+        let currentHistoryWhatsapp = null;
+
         function openClientHistory(index) {
             const c = clientsCache[index];
+            currentHistoryWhatsapp = c.whatsapp;
             document.getElementById('history-client-name').innerText = c.name || c.whatsapp;
             document.getElementById('history-client-sub').innerText = `${c.whatsapp} · ${c.orderCount} pedido(s) · Total ${money(c.totalAmount)}`;
             const wrap = document.getElementById('history-table-wrap');
+
+            // Banner de ganador + botón de confirmación (solo visible aquí, en sesión de Admin)
+            const pending = pendingMilestoneOrder(c);
+            const rewardsWon = c.rewardsWon || [];
+            const everWon = pending || rewardsWon.length > 0;
+            const banner = document.getElementById('history-reward-banner');
+            const confirmBtn = document.getElementById('history-confirm-btn');
+
+            if (everWon) {
+                banner.style.display = 'block';
+                banner.innerHTML = pending
+                    ? `🏆 Este cliente ganó el Reward <b>"Mine… Mine… Mine… Mine…"</b> (pedido global #${pending.orderNumber}) — <span style="color:var(--red-f1);">pendiente de confirmar y entregar.</span>`
+                    : `🏆 Este cliente ha ganado el Reward <b>"Mine… Mine… Mine… Mine…"</b> anteriormente.`;
+            } else {
+                banner.style.display = 'none';
+            }
+            confirmBtn.style.display = pending ? 'inline-flex' : 'none';
+
+            const summaryText = document.getElementById('history-reward-summary-text');
+            if (!rewardsWon.length) {
+                summaryText.innerHTML = 'Aún no ha ganado ningún reward.';
+            } else {
+                const last = [...rewardsWon].sort((a, b) => new Date(b.date) - new Date(a.date))[0];
+                summaryText.innerHTML = `Rewards ganados: <b>${rewardsWon.length}</b> · Último: <b>${last.reward}</b> el ${new Date(last.date).toLocaleDateString('es-CO')}`;
+            }
 
             if (!c.orders.length) {
                 wrap.innerHTML = '<div class="data-empty">Este cliente aún no tiene pedidos registrados.</div>';
@@ -1705,6 +1774,31 @@
                 </table>`;
             }
             openModal('client-history-modal');
+        }
+
+        async function confirmClientReward() {
+            if (!currentHistoryWhatsapp) return;
+            const c = clientsCache.find(x => x.whatsapp === currentHistoryWhatsapp);
+            const pending = c ? pendingMilestoneOrder(c) : null;
+            if (!pending) return;
+
+            try {
+                await db.collection('registrations').doc(currentHistoryWhatsapp).update({
+                    rewardsWon: firebase.firestore.FieldValue.arrayUnion({
+                        date: new Date().toISOString(),
+                        reward: 'Mine… Mine… Mine… Mine…',
+                        orderNumber: pending.orderNumber
+                    })
+                });
+                await loadClientsAndOrders();
+                renderClientsTable();
+                await loadMilestoneCounter();
+                const idx = clientsCache.findIndex(x => x.whatsapp === currentHistoryWhatsapp);
+                if (idx >= 0) openClientHistory(idx);
+            } catch (e) {
+                console.error(e);
+                alert('No se pudo confirmar el premio. Verifica tu conexión.');
+            }
         }
 
         function refreshWhatsappDatalist() {
