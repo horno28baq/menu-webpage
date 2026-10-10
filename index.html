@@ -461,8 +461,7 @@
         .rewards-intro { color: #ccc; font-size: 0.95rem; margin-bottom: 1.5rem; max-width: 60ch; }
         .rewards-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; }
         .reward-card { position: relative; background: var(--carbon); border: 1px solid #2a2b36; border-radius: 10px; padding: 1.75rem; transition: border-color 0.3s, transform 0.3s; }
-        .reward-img { width: 100%; height: 170px; object-fit: cover; border-radius: 8px; margin-bottom: 14px; border: 1px solid #2a2b36; }
-        .reward-card:hover { border-color: var(--gold); transform: translateY(-3px); }
+        .reward-img { width: 100%; height: auto; max-height: 350px; object-fit: contain; border-radius: 8px; margin-bottom: 14px; border: 1px solid #2a2b36; }        .reward-card:hover { border-color: var(--gold); transform: translateY(-3px); }
         .reward-icon { font-size: 2.4rem; margin-bottom: 10px; }
         .reward-title { font-family: 'Teko', sans-serif; font-size: 2rem; letter-spacing: 1px; color: var(--white); line-height: 1; }
         .reward-subtitle { font-size: 0.78rem; color: var(--gold); text-transform: uppercase; letter-spacing: 1.5px; margin: 6px 0 1rem; }
