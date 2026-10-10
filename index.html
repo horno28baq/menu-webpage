@@ -460,7 +460,8 @@
 
         .rewards-intro { color: #ccc; font-size: 0.95rem; margin-bottom: 1.5rem; max-width: 60ch; }
         .rewards-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; }
-        .reward-card { background: var(--carbon); border: 1px solid #2a2b36; border-radius: 10px; padding: 1.75rem; transition: border-color 0.3s, transform 0.3s; }
+        .reward-card { position: relative; background: var(--carbon); border: 1px solid #2a2b36; border-radius: 10px; padding: 1.75rem; transition: border-color 0.3s, transform 0.3s; }
+        .reward-img { width: 100%; height: 170px; object-fit: cover; border-radius: 8px; margin-bottom: 14px; border: 1px solid #2a2b36; }
         .reward-card:hover { border-color: var(--gold); transform: translateY(-3px); }
         .reward-icon { font-size: 2.4rem; margin-bottom: 10px; }
         .reward-title { font-family: 'Teko', sans-serif; font-size: 2rem; letter-spacing: 1px; color: var(--white); line-height: 1; }
@@ -645,29 +646,11 @@
 
             <p class="rewards-intro edit-text" data-edit-id="rewards-intro">Nuestro programa de recompensas tiene dos niveles: uno para activar tu perfil de cliente frecuente, y otro que premia a los pedidos redondos del restaurante con una pizza gratis.</p>
 
-            <div class="rewards-grid">
-                <div class="reward-card">
-                    <div class="reward-icon">🕶️</div>
-                    <h3 class="reward-title">I'll be back…</h3>
-                    <p class="reward-subtitle">Activa tu perfil de recompensas</p>
-                    <ul class="reward-list edit-text" data-edit-id="rewards-list-1">
-                        <li>Activa las notificaciones de Horno 28.</li>
-                        <li>Realiza 7 pedidos en días distintos (no aplican varios pedidos acumulados en un mismo día).</li>
-                        <li>Síguenos en Instagram <strong>@Horno28Baq</strong>.</li>
-                        <li>Autoriza que guardemos tus datos (nombre, apellido y número de teléfono) en nuestra base de clientes.</li>
-                    </ul>
-                </div>
-
-                <div class="reward-card">
-                    <div class="reward-icon">🐦</div>
-                    <h3 class="reward-title">Mine… Mine… Mine… Mine…</h3>
-                    <p class="reward-subtitle">Pizza gratis por pedidos redondos</p>
-                    <ul class="reward-list edit-text" data-edit-id="rewards-list-2">
-                        <li>Cuando Horno 28 llegue a los pedidos número 50 y número 100 (contando todos los pedidos del restaurante), esos clientes reciben una Pizza Tradicional completamente gratis.</li>
-                        <li>Para redimir este beneficio necesitas tener mínimo 2 pedidos realizados y haber autorizado guardar tus datos personales con nosotros.</li>
-                    </ul>
-                </div>
+            <div id="rewards-admin-bar" style="display:none; gap:10px; flex-wrap:wrap; margin-bottom:1.25rem;">
+                <button class="btn-add-new show" style="margin-left:0;" onclick="openRewardForm()">+ Añadir Reward</button>
+                <button class="btn-add-new" id="btn-seed-rewards" style="margin-left:0; border-color:#6ee56e; color:#6ee56e;" onclick="seedRewards()">⬆️ Cargar rewards iniciales</button>
             </div>
+            <div class="rewards-grid" id="rewards-grid"></div>
         </section>
 
     </main>
@@ -924,7 +907,45 @@
         </div>
     </div>
 
-    <!-- MODAL: Añadir / editar producto (solo admin) -->
+        <!-- MODAL: Añadir / editar reward (solo admin) -->
+    <div id="reward-form-modal" class="modal-overlay" onclick="closeModalOnOuterClick(event, 'reward-form-modal')">
+        <div class="modal-card">
+            <div class="modal-body">
+                <h3 class="modal-title" id="reward-form-title" style="margin-bottom: 1rem;">+ Añadir Reward</h3>
+                <input type="hidden" id="rw-id">
+                <div class="form-field">
+                    <label>Ícono (un emoji)</label>
+                    <input type="text" id="rw-icon" placeholder="Ej: 🎁">
+                </div>
+                <div class="form-field">
+                    <label>Nombre del Reward</label>
+                    <input type="text" id="rw-title">
+                </div>
+                <div class="form-field">
+                    <label>Subtítulo corto</label>
+                    <input type="text" id="rw-subtitle">
+                </div>
+                <div class="form-field">
+                    <label>Condiciones / beneficios (uno por línea)</label>
+                    <textarea id="rw-items"></textarea>
+                </div>
+                <div class="form-field">
+                    <label>Foto de referencia (opcional)</label>
+                    <input type="file" id="rw-image" accept="image/*">
+                    <label style="margin-top:8px; display:flex; align-items:center; gap:6px; text-transform:none; letter-spacing:0; font-weight:600;" id="rw-remove-image-row"><input type="checkbox" id="rw-remove-image"> Quitar la foto actual</label>
+                </div>
+                <div class="modal-actions">
+                    <button class="modal-form-submit" style="background:var(--red-f1);" onclick="saveRewardForm()">Guardar Reward</button>
+                    <button class="modal-form-cancel" onclick="closeModal('reward-form-modal')">Cancelar</button>
+                </div>
+                <div class="modal-actions" id="rw-delete-row" style="display:none; margin-top:10px;">
+                    <button class="modal-form-cancel" style="background:#7a0000;" onclick="deleteRewardFromForm()">🗑️ Eliminar Reward (permanente)</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+<!-- MODAL: Añadir / editar producto (solo admin) -->
     <div id="product-form-modal" class="modal-overlay" onclick="closeModalOnOuterClick(event, 'product-form-modal')">
         <div class="modal-card">
             <div class="modal-body">
@@ -1262,6 +1283,7 @@
             });
 
             renderProducts();
+            renderRewards();
         }
 
         /* ---------- Edición de textos (Firestore: siteText/main) ---------- */
@@ -2098,10 +2120,165 @@
             }
         }
 
+
+        /* ================== REWARDS ADMINISTRABLES (Firestore: colección "rewards") ================== */
+        const DEFAULT_REWARDS = [
+            { id: 'default-illbeback', icon: '🕶️', title: "I'll be back…", subtitle: 'Activa tu perfil de recompensas', image: null, order: 1, items: [
+                'Activa las notificaciones de Horno 28.',
+                'Realiza 7 pedidos en días distintos (no aplican varios pedidos acumulados en un mismo día).',
+                'Síguenos en Instagram @Horno28Baq.',
+                'Autoriza que guardemos tus datos (nombre, apellido y número de teléfono) en nuestra base de clientes.' ] },
+            { id: 'default-mine', icon: '🐦', title: 'Mine… Mine… Mine… Mine…', subtitle: 'Pizza gratis por pedidos redondos', image: null, order: 2, items: [
+                'Cada 30 pedidos del restaurante (30, 60, 90…), el cliente que haga ese pedido recibe un premio.',
+                'Para redimir este beneficio necesitas tener mínimo 2 pedidos realizados y haber autorizado guardar tus datos personales con nosotros.' ] }
+        ];
+
+        let rewardsCache = [];
+        let rewardsLoaded = false;
+        let rewardsSeeded = false;
+        let rwImageFile = null;
+        let rwImagePreview = null;
+
+        function escHtml(s) {
+            return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+        }
+
+        async function loadRewards() {
+            try {
+                const snap = await db.collection('rewards').get();
+                rewardsSeeded = snap.docs.some(d => d.id === '_config');
+                rewardsCache = snap.docs.filter(d => d.id !== '_config').map(d => Object.assign({ id: d.id }, d.data()));
+            } catch (e) {
+                console.error(e);
+                rewardsSeeded = false;
+                rewardsCache = [];
+            }
+            rewardsLoaded = true;
+            renderRewards();
+        }
+
+        function renderRewards() {
+            const grid = document.getElementById('rewards-grid');
+            if (!grid) return;
+            const admin = isAdmin();
+            document.getElementById('rewards-admin-bar').style.display = admin ? 'flex' : 'none';
+            document.getElementById('btn-seed-rewards').classList.toggle('show', admin && rewardsLoaded && !rewardsSeeded);
+            if (!rewardsLoaded) { grid.innerHTML = '<p style="color:#888;">Cargando rewards...</p>'; return; }
+
+            const useDefaults = !rewardsSeeded;
+            const list = (useDefaults ? DEFAULT_REWARDS : rewardsCache).slice().sort((a, b) => (a.order || 0) - (b.order || 0));
+
+            if (!list.length) {
+                grid.innerHTML = '<p style="color:#888;">Muy pronto tendremos nuevos rewards para ti.</p>';
+                return;
+            }
+            grid.innerHTML = list.map(r => `
+                <div class="reward-card">
+                    ${(!useDefaults && admin) ? `<button class="card-admin-edit show" title="Editar reward" onclick="openRewardForm('${r.id}')">✏️</button>` : ''}
+                    ${r.image ? `<img class="reward-img" src="${r.image}" alt="${escHtml(r.title)}">` : ''}
+                    <div class="reward-icon">${escHtml(r.icon || '🎁')}</div>
+                    <h3 class="reward-title">${escHtml(r.title)}</h3>
+                    <p class="reward-subtitle">${escHtml(r.subtitle || '')}</p>
+                    <ul class="reward-list">${(r.items || []).map(i => `<li>${escHtml(i)}</li>`).join('')}</ul>
+                </div>`).join('');
+        }
+
+        async function seedRewards() {
+            if (!isAdmin()) return;
+            if (!confirm('Esto carga los 2 rewards actuales para que puedas editarlos o borrarlos. ¿Continuar?')) return;
+            try {
+                const batch = db.batch();
+                DEFAULT_REWARDS.forEach(r => {
+                    const { id, ...data } = r;
+                    batch.set(db.collection('rewards').doc(id), data);
+                });
+                batch.set(db.collection('rewards').doc('_config'), { seeded: true });
+                await batch.commit();
+                await loadRewards();
+            } catch (e) {
+                console.error(e);
+                alert('No se pudo cargar. Verifica las reglas de Firestore para la colección "rewards".');
+            }
+        }
+
+        function openRewardForm(editId) {
+            rwImageFile = null;
+            rwImagePreview = null;
+            document.getElementById('rw-id').value = editId || '';
+            document.getElementById('reward-form-title').innerText = editId ? '✏️ Editar Reward' : '+ Añadir Reward';
+            document.getElementById('rw-image').value = '';
+            document.getElementById('rw-remove-image').checked = false;
+            const r = editId ? rewardsCache.find(x => x.id === editId) : null;
+            document.getElementById('rw-icon').value = r ? (r.icon || '') : '🎁';
+            document.getElementById('rw-title').value = r ? r.title : '';
+            document.getElementById('rw-subtitle').value = r ? (r.subtitle || '') : '';
+            document.getElementById('rw-items').value = r ? (r.items || []).join('\n') : '';
+            rwImagePreview = r ? (r.image || null) : null;
+            document.getElementById('rw-remove-image-row').style.display = rwImagePreview ? 'flex' : 'none';
+            document.getElementById('rw-delete-row').style.display = editId ? 'flex' : 'none';
+            openModal('reward-form-modal');
+        }
+
+        document.getElementById('rw-image').addEventListener('change', function (ev) {
+            rwImageFile = ev.target.files[0] || null;
+        });
+
+        async function saveRewardForm() {
+            const id = document.getElementById('rw-id').value;
+            const title = document.getElementById('rw-title').value.trim();
+            if (!title) { alert('El nombre del reward es obligatorio.'); return; }
+            const icon = document.getElementById('rw-icon').value.trim() || '🎁';
+            const subtitle = document.getElementById('rw-subtitle').value.trim();
+            const items = document.getElementById('rw-items').value.split('\n').map(s => s.trim()).filter(Boolean);
+
+            const btn = document.querySelector('#reward-form-modal .modal-form-submit');
+            btn.disabled = true; btn.innerText = 'Guardando...';
+            try {
+                let image = rwImagePreview;
+                if (document.getElementById('rw-remove-image').checked) image = null;
+                if (rwImageFile) {
+                    image = await resizeImageFile(rwImageFile, 700, 0.72);
+                    if (image.length > 900000) image = await resizeImageFile(rwImageFile, 450, 0.6);
+                    if (image.length > 900000) {
+                        alert('Esa imagen sigue siendo muy pesada. Prueba con una de menor resolución.');
+                        return;
+                    }
+                }
+                const docId = id || db.collection('rewards').doc().id;
+                const existing = id ? rewardsCache.find(x => x.id === id) : null;
+                const order = existing ? (existing.order || 0) : Date.now();
+                await db.collection('rewards').doc(docId).set({ icon, title, subtitle, items, image: image || null, order });
+                if (!rewardsSeeded) await db.collection('rewards').doc('_config').set({ seeded: true });
+                closeModal('reward-form-modal');
+                await loadRewards();
+            } catch (e) {
+                console.error(e);
+                alert('No se pudo guardar el reward. Verifica tu conexión y las reglas de Firestore.');
+            } finally {
+                btn.disabled = false; btn.innerText = 'Guardar Reward';
+            }
+        }
+
+        async function deleteRewardFromForm() {
+            const id = document.getElementById('rw-id').value;
+            if (!id) return;
+            const r = rewardsCache.find(x => x.id === id);
+            if (!confirm(`¿Eliminar el reward "${r ? r.title : id}" permanentemente? No se puede deshacer.`)) return;
+            try {
+                await db.collection('rewards').doc(id).delete();
+                closeModal('reward-form-modal');
+                await loadRewards();
+            } catch (e) {
+                console.error(e);
+                alert('No se pudo eliminar el reward.');
+            }
+        }
+
         /* ---------- Inicialización ---------- */
         window.addEventListener('DOMContentLoaded', () => {
             loadTextOverrides();
             loadProducts();
+            loadRewards();
         });
     </script>
 </body>
