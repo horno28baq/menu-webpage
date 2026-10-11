@@ -461,7 +461,24 @@
         .rewards-intro { color: #ccc; font-size: 0.95rem; margin-bottom: 1.5rem; max-width: 60ch; }
         .rewards-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; }
         .reward-card { position: relative; background: var(--carbon); border: 1px solid #2a2b36; border-radius: 10px; padding: 1.75rem; transition: border-color 0.3s, transform 0.3s; }
-        .reward-img { width: 100%; height: auto; max-height: 350px; object-fit: contain; border-radius: 8px; margin-bottom: 14px; border: 1px solid #2a2b36; }        .reward-card:hover { border-color: var(--gold); transform: translateY(-3px); }
+        .rw-badge { position: absolute; top: -12px; left: 16px; padding: 4px 14px; border-radius: 20px; font-family: 'Teko', sans-serif; font-size: 1rem; letter-spacing: 1.5px; text-transform: uppercase; z-index: 4; white-space: nowrap; }
+        .rw-badge.live { background: #39ff14; color: #06210a; font-weight: 700; animation: neon-pulse 1.3s infinite; }
+        .rw-badge.paused { background: #444; color: #ddd; }
+        .rw-badge.expired { background: #8a0000; color: #fff; }
+        @keyframes neon-pulse {
+            0%, 100% { box-shadow: 0 0 6px #39ff14, 0 0 14px rgba(57,255,20,0.55); }
+            50% { box-shadow: 0 0 12px #39ff14, 0 0 34px rgba(57,255,20,0.95); }
+        }
+        .reward-card.live { border-color: #39ff14; box-shadow: 0 0 16px rgba(57,255,20,0.25); }
+        .reward-card.paused, .reward-card.expired { opacity: 0.6; filter: grayscale(0.6); }
+        .rw-countdown-wrap { text-align: center; margin: 4px 0 12px; font-family: 'Teko', sans-serif; font-size: 1.15rem; letter-spacing: 1px; color: #bbb; }
+        .rw-countdown { color: #39ff14; font-size: 1.5rem; text-shadow: 0 0 8px rgba(57,255,20,0.7); }
+        .rw-expired-note { text-align: center; margin: 4px 0 12px; font-size: 0.8rem; color: #ff6b6b; }
+        .rw-toggle { width: 100%; margin-top: 14px; background: rgba(212,175,55,0.12); color: var(--gold); border: 1px dashed var(--gold); border-radius: 6px; padding: 8px; font-family: 'Teko', sans-serif; font-size: 1.1rem; letter-spacing: 1px; cursor: pointer; text-transform: uppercase; }
+        .rw-toggle:hover { background: rgba(212,175,55,0.25); }
+        .form-field input[type="datetime-local"] { width: 100%; background: rgba(255,255,255,0.05); border: 1px solid #333; border-radius: 6px; padding: 10px 12px; color: var(--white); font-size: 0.9rem; color-scheme: dark; }
+        .reward-img { width: 100%; height: 170px; object-fit: cover; border-radius: 8px; margin-bottom: 14px; border: 1px solid #2a2b36; }
+        .reward-card:hover { border-color: var(--gold); transform: translateY(-3px); }
         .reward-icon { font-size: 2.4rem; margin-bottom: 10px; }
         .reward-title { font-family: 'Teko', sans-serif; font-size: 2rem; letter-spacing: 1px; color: var(--white); line-height: 1; }
         .reward-subtitle { font-size: 0.78rem; color: var(--gold); text-transform: uppercase; letter-spacing: 1.5px; margin: 6px 0 1rem; }
@@ -927,6 +944,14 @@
                 <div class="form-field">
                     <label>Condiciones / beneficios (uno por línea)</label>
                     <textarea id="rw-items"></textarea>
+                </div>
+                <div class="form-field">
+                    <label>Vigente hasta (opcional)</label>
+                    <input type="datetime-local" id="rw-expires">
+                    <small style="color:#888; font-size:0.72rem;">Al llegar esa fecha y hora, el reward pasa a mostrarse como "Expirada". Déjalo vacío si no tiene fecha límite.</small>
+                </div>
+                <div class="form-field">
+                    <label style="display:flex; align-items:center; gap:8px; text-transform:none; letter-spacing:0; font-size:0.85rem;"><input type="checkbox" id="rw-active"> Reward activo (visible para los clientes)</label>
                 </div>
                 <div class="form-field">
                     <label>Foto de referencia (opcional)</label>
@@ -2156,6 +2181,13 @@
             renderRewards();
         }
 
+        function rewardStatus(r) {
+            const paused = r.active === false;
+            const exp = r.expiresAt ? new Date(r.expiresAt).getTime() : null;
+            const expired = !paused && exp !== null && exp <= Date.now();
+            return { paused, expired, live: !paused && !expired, exp };
+        }
+
         function renderRewards() {
             const grid = document.getElementById('rewards-grid');
             if (!grid) return;
@@ -2165,21 +2197,76 @@
             if (!rewardsLoaded) { grid.innerHTML = '<p style="color:#888;">Cargando rewards...</p>'; return; }
 
             const useDefaults = !rewardsSeeded;
-            const list = (useDefaults ? DEFAULT_REWARDS : rewardsCache).slice().sort((a, b) => (a.order || 0) - (b.order || 0));
+            let list = (useDefaults ? DEFAULT_REWARDS : rewardsCache).slice().sort((a, b) => (a.order || 0) - (b.order || 0));
+            // Los clientes no ven los rewards desactivados; el admin sí (para editarlos o eliminarlos)
+            if (!useDefaults && !admin) list = list.filter(r => r.active !== false);
 
             if (!list.length) {
                 grid.innerHTML = '<p style="color:#888;">Muy pronto tendremos nuevos rewards para ti.</p>';
                 return;
             }
-            grid.innerHTML = list.map(r => `
-                <div class="reward-card">
-                    ${(!useDefaults && admin) ? `<button class="card-admin-edit show" title="Editar reward" onclick="openRewardForm('${r.id}')">✏️</button>` : ''}
+            grid.innerHTML = list.map(r => {
+                const st = useDefaults ? null : rewardStatus(r);
+                let cls = '', badge = '', extra = '';
+                if (st) {
+                    if (st.paused) { cls = ' paused'; badge = '<span class="rw-badge paused">⏸ Pausado · solo tú lo ves</span>'; }
+                    else if (st.expired) {
+                        cls = ' expired'; badge = '<span class="rw-badge expired">Expirada</span>';
+                        extra = `<div class="rw-expired-note">Venció el ${new Date(st.exp).toLocaleDateString('es-CO')}</div>`;
+                    } else {
+                        cls = ' live'; badge = '<span class="rw-badge live">● Promoción activa</span>';
+                        if (st.exp) extra = `<div class="rw-countdown-wrap">⏳ Termina en <span class="rw-countdown" data-exp="${st.exp}"></span></div>`;
+                    }
+                }
+                const editBtn = (!useDefaults && admin) ? `<button class="card-admin-edit show" title="Editar reward" onclick="openRewardForm('${r.id}')">✏️</button>` : '';
+                const toggle = (!useDefaults && admin) ? `<button class="rw-toggle" onclick="toggleRewardActive('${r.id}')">${st.paused ? '▶ Activar' : '⏸ Desactivar'}</button>` : '';
+                return `
+                <div class="reward-card${cls}">
+                    ${badge}
+                    ${editBtn}
                     ${r.image ? `<img class="reward-img" src="${r.image}" alt="${escHtml(r.title)}">` : ''}
                     <div class="reward-icon">${escHtml(r.icon || '🎁')}</div>
                     <h3 class="reward-title">${escHtml(r.title)}</h3>
                     <p class="reward-subtitle">${escHtml(r.subtitle || '')}</p>
+                    ${extra}
                     <ul class="reward-list">${(r.items || []).map(i => `<li>${escHtml(i)}</li>`).join('')}</ul>
-                </div>`).join('');
+                    ${toggle}
+                </div>`;
+            }).join('');
+            tickRewards();
+        }
+
+        function tickRewards() {
+            let needRender = false;
+            document.querySelectorAll('.rw-countdown[data-exp]').forEach(el => {
+                let ms = Number(el.dataset.exp) - Date.now();
+                if (ms <= 0) { needRender = true; return; }
+                const d = Math.floor(ms / 86400000); ms -= d * 86400000;
+                const hh = Math.floor(ms / 3600000); ms -= hh * 3600000;
+                const mm = Math.floor(ms / 60000); ms -= mm * 60000;
+                const ss = Math.floor(ms / 1000);
+                const p = n => String(n).padStart(2, '0');
+                el.textContent = (d > 0 ? d + 'd ' : '') + p(hh) + ':' + p(mm) + ':' + p(ss);
+            });
+            if (needRender) renderRewards();
+        }
+        setInterval(tickRewards, 1000);
+
+        async function toggleRewardActive(id) {
+            if (!isAdmin()) return;
+            const r = rewardsCache.find(x => x.id === id);
+            if (!r) return;
+            const activating = r.active === false;
+            try {
+                await db.collection('rewards').doc(id).update({ active: activating });
+                await loadRewards();
+                if (activating && r.expiresAt && new Date(r.expiresAt).getTime() <= Date.now()) {
+                    alert('Ojo: la fecha de vigencia de este reward ya pasó, por eso se verá como "Expirada". Edítalo y pon una fecha nueva si quieres reactivar la promoción.');
+                }
+            } catch (e) {
+                console.error(e);
+                alert('No se pudo cambiar el estado del reward.');
+            }
         }
 
         async function seedRewards() {
@@ -2189,7 +2276,7 @@
                 const batch = db.batch();
                 DEFAULT_REWARDS.forEach(r => {
                     const { id, ...data } = r;
-                    batch.set(db.collection('rewards').doc(id), data);
+                    batch.set(db.collection('rewards').doc(id), Object.assign({}, data, { active: true, expiresAt: null }));
                 });
                 batch.set(db.collection('rewards').doc('_config'), { seeded: true });
                 await batch.commit();
@@ -2213,6 +2300,13 @@
             document.getElementById('rw-subtitle').value = r ? (r.subtitle || '') : '';
             document.getElementById('rw-items').value = r ? (r.items || []).join('\n') : '';
             rwImagePreview = r ? (r.image || null) : null;
+            document.getElementById('rw-active').checked = r ? (r.active !== false) : true;
+            if (r && r.expiresAt) {
+                const dt = new Date(r.expiresAt);
+                document.getElementById('rw-expires').value = new Date(dt.getTime() - dt.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+            } else {
+                document.getElementById('rw-expires').value = '';
+            }
             document.getElementById('rw-remove-image-row').style.display = rwImagePreview ? 'flex' : 'none';
             document.getElementById('rw-delete-row').style.display = editId ? 'flex' : 'none';
             openModal('reward-form-modal');
@@ -2229,6 +2323,9 @@
             const icon = document.getElementById('rw-icon').value.trim() || '🎁';
             const subtitle = document.getElementById('rw-subtitle').value.trim();
             const items = document.getElementById('rw-items').value.split('\n').map(s => s.trim()).filter(Boolean);
+            const active = document.getElementById('rw-active').checked;
+            const expVal = document.getElementById('rw-expires').value;
+            const expiresAt = expVal ? new Date(expVal).toISOString() : null;
 
             const btn = document.querySelector('#reward-form-modal .modal-form-submit');
             btn.disabled = true; btn.innerText = 'Guardando...';
@@ -2246,7 +2343,7 @@
                 const docId = id || db.collection('rewards').doc().id;
                 const existing = id ? rewardsCache.find(x => x.id === id) : null;
                 const order = existing ? (existing.order || 0) : Date.now();
-                await db.collection('rewards').doc(docId).set({ icon, title, subtitle, items, image: image || null, order });
+                await db.collection('rewards').doc(docId).set({ icon, title, subtitle, items, image: image || null, order, active, expiresAt });
                 if (!rewardsSeeded) await db.collection('rewards').doc('_config').set({ seeded: true });
                 closeModal('reward-form-modal');
                 await loadRewards();
